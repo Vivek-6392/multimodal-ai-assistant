@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: agentic-multimodal-ai
+    env: docker
+    plan: starter
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_CHAT_MODEL
+        value: llama-3.3-70b-versatile
+      - key: GROQ_AUDIO_MODEL
+        value: whisper-large-v3-turbo
+      - key: API_BASE_URL
+        value: http://127.0.0.1:8000
