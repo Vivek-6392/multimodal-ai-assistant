@@ -82,7 +82,7 @@ Upload/message -> FileProcessor -> OCR/PDF/Audio services -> URL detection
 | Output includes final answer, extracted text, and tool trace | Implemented |
 | Cost estimate and execution graph | Implemented |
 | Docker and Render deployment config | Implemented |
-| Public live URL | Requires deployment from your Render/cloud account |
+| Public live URL | https://huggingface.co/spaces/theyadavvivek/multimodal-agent-api |
 
 ## Environment
 
