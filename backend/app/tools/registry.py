@@ -193,24 +193,48 @@ class ToolRegistry:
 
     def _fetch_transcript_supadata(self, video_id: str) -> str:
         """Cloud-friendly transcript API. Set SUPADATA_API_KEY in HF Secrets."""
+        import urllib.request, urllib.parse, json
+
         api_key = os.environ.get("SUPADATA_API_KEY", "")
         if not api_key:
             print("Supadata: SUPADATA_API_KEY not set, skipping")
             return ""
+
         try:
-            import urllib.request, json
-            url = f"https://api.supadata.ai/v1/youtube/transcript?videoId={video_id}&text=true"
-            req = urllib.request.Request(url, headers={"x-api-key": api_key})
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            # Use full video URL with the v1/transcript endpoint (current API)
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            api_url = (
+                "https://api.supadata.ai/v1/transcript?url="
+                + urllib.parse.quote(video_url, safe="")
+            )
+            print(f"Supadata: calling {api_url}")
+
+            req = urllib.request.Request(api_url, headers={"x-api-key": api_key})
+            with urllib.request.urlopen(req, timeout=20) as resp:
                 data = json.loads(resp.read().decode())
-            segments = data.get("content", [])
-            text = " ".join(seg["text"] for seg in segments if seg.get("text"))
+
+            content = data.get("content", "")
+
+            # content is a plain string when no segments requested
+            if isinstance(content, str):
+                text = content.strip()
+            else:
+                # fallback: list of {text, offset, duration} objects
+                text = " ".join(seg["text"] for seg in content if seg.get("text"))
+
+            if not text:
+                print("Supadata: empty response")
+                return ""
+
             print(f"Supadata: fetched {len(text)} chars")
             return text
+
+        except urllib.error.HTTPError as e:
+            print(f"Supadata HTTP {e.code}: {e.reason}")
+            return ""
         except Exception as e:
             print(f"Supadata failed: {e}")
             return ""
-
     def youtube_transcript(self, urls: list[str], **_: Any) -> ToolResult:
         print("=" * 80)
         print("youtube_transcript called")
