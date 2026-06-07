@@ -191,6 +191,26 @@ class ToolRegistry:
             print(e)
             return ""
 
+    def _fetch_transcript_supadata(self, video_id: str) -> str:
+        """Cloud-friendly transcript API. Set SUPADATA_API_KEY in HF Secrets."""
+        api_key = os.environ.get("SUPADATA_API_KEY", "")
+        if not api_key:
+            print("Supadata: SUPADATA_API_KEY not set, skipping")
+            return ""
+        try:
+            import urllib.request, json
+            url = f"https://api.supadata.ai/v1/youtube/transcript?videoId={video_id}&text=true"
+            req = urllib.request.Request(url, headers={"x-api-key": api_key})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+            segments = data.get("content", [])
+            text = " ".join(seg["text"] for seg in segments if seg.get("text"))
+            print(f"Supadata: fetched {len(text)} chars")
+            return text
+        except Exception as e:
+            print(f"Supadata failed: {e}")
+            return ""
+
     def youtube_transcript(self, urls: list[str], **_: Any) -> ToolResult:
         print("=" * 80)
         print("youtube_transcript called")
@@ -242,7 +262,7 @@ class ToolRegistry:
             try:
                 from youtube_transcript_api import YouTubeTranscriptApi
 
-                api = self._make_ytt_api()
+                api = YouTubeTranscriptApi()
 
                 transcript_data = api.fetch(video_id)
 
@@ -264,25 +284,22 @@ class ToolRegistry:
                 print(transcript_text[:500])
 
             except Exception as exc:
-
                 print("youtube-transcript-api failed")
                 print(type(exc).__name__)
                 print(str(exc))
 
-                transcript_text = self._fetch_transcript_with_ytdlp(url)
+                # Try Supadata first (works on cloud IPs)
+                transcript_text = self._fetch_transcript_supadata(video_id)
+
+                # Fall back to yt-dlp (works in local dev)
+                if not transcript_text:
+                    transcript_text = self._fetch_transcript_with_ytdlp(url)
 
                 if transcript_text:
-
                     transcripts[url] = transcript_text
-
-                    print("Recovered transcript via yt-dlp")
-                    print("Transcript length:", len(transcript_text))
-
+                    print("Recovered transcript, length:", len(transcript_text))
                 else:
-
-                    failures[url] = (
-                        f"{type(exc).__name__}: {str(exc)}"
-                    )
+                    failures[url] = f"{type(exc).__name__}: {str(exc)}"
 
         print("\n" + "=" * 80)
         print("FINAL RESULT")
