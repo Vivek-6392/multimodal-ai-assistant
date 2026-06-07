@@ -26,6 +26,7 @@ class AgentOrchestrator:
         trace: list[ToolTraceStep] = []
         combined_context = self._combine_context(message, artifacts)
         urls = sorted(set(detect_urls(message or "") + [url for artifact in artifacts for url in artifact.urls]))
+        print("DETECTED URLS:", urls)
         has_audio = any(artifact.artifact_type.value == "audio" for artifact in artifacts)
         has_pdf = any(artifact.artifact_type.value == "pdf" for artifact in artifacts)
 
@@ -122,31 +123,103 @@ class AgentOrchestrator:
         artifacts=None,
     ):
 
-        if not tool_outputs:
+        transcript_text = self._combined_transcript(tool_outputs)
+        youtube_failure = self._youtube_failure(tool_outputs)
+
+        print("=" * 60)
+        print("TRANSCRIPT LENGTH:", len(transcript_text))
+        print("TRANSCRIPT PREVIEW:")
+        print(transcript_text[:500])
+        print("=" * 60)
+
+        if youtube_failure and self._has_substantive_video_context(context):
+
+            system = (
+                "You are a concise summarization assistant. "
+                "Using ONLY the provided PDF content, produce a brief summary."
+            )
+
+            user = (
+                f"User request:\n{message or 'Summarize the referenced video.'}\n\n"
+                f"Extracted content:\n{context[:18000]}"
+            )
+
+            answer = self.tools.groq_client.chat(system, user)
+
+        elif youtube_failure:
+
+            answer = (
+                "I found a YouTube URL in the PDF, but I could not retrieve "
+                "the video's transcript."
+            )
+
+        elif transcript_text:
+
+            # IMPORTANT FIX
+            summary_result = self.tools.run(
+                "summarize",
+                message=message,
+                context=transcript_text,
+            )
+
+            answer = summary_result.answer
+
+        elif not tool_outputs:
+
             result = self.tools.run(
                 "qa",
                 message=message,
                 context=context,
                 urls=[]
             )
+
             answer = result.answer
+
         else:
+
             answer = tool_outputs[-1].answer
 
-        plan_text = "\n".join(
-            f"{i+1}. {t.tool}"
-            for i, t in enumerate(trace or [])
-        )
+        return answer
 
-        extracted = "\n\n".join(
-            a.text[:1500]
-            for a in (artifacts or [])
-        )
+    @staticmethod
+    def _combined_transcript(tool_outputs: list[ToolResult]) -> str:
+        transcript_sections: list[str] = []
+        for output in tool_outputs:
+            transcripts = output.metadata.get("transcripts") if output.metadata else None
+            if isinstance(transcripts, dict):
+                transcript_sections.extend(text for text in transcripts.values() if text)
+        return "\n\n".join(transcript_sections).strip()
 
-        return f"""
+    @staticmethod
+    def _youtube_failure(tool_outputs: list[ToolResult]) -> bool:
+        """
+        True only when transcript retrieval completely failed.
+        """
 
-    {answer}
-    """
+        found_transcript = False
+        found_failure = False
+
+        for output in tool_outputs:
+            if not output.metadata:
+                continue
+
+            transcripts = output.metadata.get("transcripts", {})
+            failures = output.metadata.get("failures", {})
+
+            if transcripts:
+                found_transcript = True
+
+            if failures:
+                found_failure = True
+
+        return found_failure and not found_transcript
+    @staticmethod
+    def _has_substantive_video_context(context: str) -> bool:
+        import re
+
+        without_urls = re.sub(r"https?://\S+", " ", context or "")
+        words = re.findall(r"[A-Za-z0-9]{3,}", without_urls)
+        return len(words) >= 20
 
     def _response(
         self,

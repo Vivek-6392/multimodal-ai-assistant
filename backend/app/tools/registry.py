@@ -1,3 +1,6 @@
+import os
+import tempfile
+import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -119,40 +122,192 @@ class ToolRegistry:
             output_summary="Code analysis completed."
         )
 
+    def _fetch_transcript_with_ytdlp(self, video_url: str) -> str:
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+
+                cmd = [
+                    "python", "-m", "yt_dlp",  # Use yt_dlp as a module to ensure the correct version is used
+                    "--skip-download",
+                    "--write-auto-subs",
+                    "--write-subs",
+                    "--sub-langs",
+                    "en.*",
+                    "-o",
+                    os.path.join(temp_dir, "%(id)s"),
+                    video_url,
+                ]
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                )
+
+                if result.returncode != 0:
+                    print("yt-dlp error:")
+                    print(result.stderr)
+                    return ""
+
+                subtitle_files = [
+                    f for f in os.listdir(temp_dir)
+                    if f.endswith(".vtt")
+                ]
+
+                if not subtitle_files:
+                    print("No subtitle files found")
+                    return ""
+
+                subtitle_path = os.path.join(
+                    temp_dir,
+                    subtitle_files[0]
+                )
+
+                transcript_lines = []
+
+                with open(
+                    subtitle_path,
+                    "r",
+                    encoding="utf-8",
+                    errors="ignore",
+                ) as f:
+
+                    for line in f:
+                        line = line.strip()
+
+                        if (
+                            not line
+                            or line.startswith("WEBVTT")
+                            or "-->" in line
+                        ):
+                            continue
+
+                        transcript_lines.append(line)
+
+                return "\n".join(transcript_lines)
+
+        except Exception as e:
+            print("yt-dlp fallback failed:")
+            print(e)
+            return ""
+
     def youtube_transcript(self, urls: list[str], **_: Any) -> ToolResult:
+        print("=" * 80)
+        print("youtube_transcript called")
+        print("urls =", urls)
+        print("=" * 80)
+
         youtube_urls = [url for url in urls if is_youtube_url(url)]
+
         if not youtube_urls:
-            return ToolResult(answer="", output_summary="No YouTube URL found.", metadata={"transcripts": {}})
+            return ToolResult(
+                answer="",
+                output_summary="No YouTube URL found.",
+                metadata={
+                    "transcripts": {},
+                    "failures": {},
+                },
+            )
 
         try:
             from youtube_transcript_api import YouTubeTranscriptApi
-            from youtube_transcript_api.formatters import TextFormatter
         except ImportError:
             return ToolResult(
                 answer="",
                 output_summary="youtube-transcript-api is not installed.",
-                metadata={"transcripts": {}, "warning": "Install youtube-transcript-api."},
+                metadata={
+                    "transcripts": {},
+                    "failures": {
+                        "import": "Install youtube-transcript-api"
+                    },
+                },
             )
 
-        formatter = TextFormatter()
         transcripts: dict[str, str] = {}
         failures: dict[str, str] = {}
+
         for url in youtube_urls:
+
+            print("\n" + "=" * 80)
+            print("PROCESSING URL:", url)
+
             video_id = self._youtube_id(url)
+
+            print("VIDEO ID:", video_id)
+
             if not video_id:
                 failures[url] = "Could not parse video id."
                 continue
-            try:
-                transcript = YouTubeTranscriptApi.get_transcript(video_id)
-                transcripts[url] = formatter.format_transcript(transcript)
-            except Exception as exc:
-                failures[url] = str(exc)
 
-        joined = "\n\n".join(f"Transcript for {url}:\n{text}" for url, text in transcripts.items())
-        summary = f"Fetched {len(transcripts)} YouTube transcript(s)."
-        if failures:
-            summary += f" {len(failures)} URL(s) failed."
-        return ToolResult(answer=joined, output_summary=summary, metadata={"transcripts": transcripts, "failures": failures})
+            try:
+                from youtube_transcript_api import YouTubeTranscriptApi
+
+                api = YouTubeTranscriptApi()
+
+                transcript_data = api.fetch(video_id)
+
+                transcript_text = "\n".join(
+                    snippet.text
+                    for snippet in transcript_data
+                    if getattr(snippet, "text", "")
+                ).strip()
+
+                if not transcript_text:
+                    failures[url] = "Transcript empty."
+                    continue
+
+                transcripts[url] = transcript_text
+
+                print("SUCCESS")
+                print("TRANSCRIPT LENGTH:", len(transcript_text))
+                print("PREVIEW:")
+                print(transcript_text[:500])
+
+            except Exception as exc:
+
+                print("youtube-transcript-api failed")
+                print(type(exc).__name__)
+                print(str(exc))
+
+                transcript_text = self._fetch_transcript_with_ytdlp(url)
+
+                if transcript_text:
+
+                    transcripts[url] = transcript_text
+
+                    print("Recovered transcript via yt-dlp")
+                    print("Transcript length:", len(transcript_text))
+
+                else:
+
+                    failures[url] = (
+                        f"{type(exc).__name__}: {str(exc)}"
+                    )
+
+        print("\n" + "=" * 80)
+        print("FINAL RESULT")
+        print("TRANSCRIPTS:", len(transcripts))
+        print("FAILURES:", len(failures))
+        print(failures)
+        print("=" * 80)
+
+        joined = "\n\n".join(
+            text
+            for text in transcripts.values()
+            if text
+        )
+
+        return ToolResult(
+            answer=joined,
+            output_summary=(
+                f"Fetched {len(transcripts)} transcript(s). "
+                f"{len(failures)} failure(s)."
+            ),
+            metadata={
+                "transcripts": transcripts,
+                "failures": failures,
+            },
+        )
 
     def qa(self, message: str, context: str, **_: Any) -> ToolResult:
         system = (
@@ -169,6 +324,26 @@ class ToolRegistry:
             output_summary="Audio transcription retrieved.",
             metadata={"source": "groq_whisper"}
         )
+
+    @staticmethod
+    def _ordered_transcripts(transcript_list: Any) -> list[Any]:
+        transcripts = list(transcript_list)
+        if not transcripts:
+            return []
+
+        english: list[Any] = []
+        hindi: list[Any] = []
+        fallback: list[Any] = []
+        for transcript in transcripts:
+            language_code = str(getattr(transcript, "language_code", "")).lower()
+            if language_code.startswith("en"):
+                english.append(transcript)
+            elif language_code == "hi":
+                hindi.append(transcript)
+            else:
+                fallback.append(transcript)
+
+        return english + hindi + fallback
 
     def compare_content(self, message: str, context: str, **_) -> ToolResult:
 
@@ -203,15 +378,25 @@ class ToolRegistry:
 
     @staticmethod
     def _youtube_id(url: str) -> str | None:
-        import re
+        from urllib.parse import urlparse, parse_qs
 
-        patterns = [
-            r"youtu\.be/([A-Za-z0-9_-]{6,})",
-            r"[?&]v=([A-Za-z0-9_-]{6,})",
-            r"youtube\.com/shorts/([A-Za-z0-9_-]{6,})",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return match.group(1)
+        try:
+
+            if "youtu.be/" in url:
+                return urlparse(url).path.lstrip("/")
+
+            if "youtube.com/watch" in url:
+                return parse_qs(
+                    urlparse(url).query
+                ).get("v", [None])[0]
+
+            if "/shorts/" in url:
+                return (
+                    url.split("/shorts/")[1]
+                    .split("?")[0]
+                )
+
+        except Exception:
+            pass
+
         return None
