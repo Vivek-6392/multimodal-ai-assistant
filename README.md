@@ -1,3 +1,11 @@
+---
+title: Multimodal Agent AI
+emoji: 🤖
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
 # Agentic Multimodal AI Application
 
 Production-ready FastAPI + Streamlit system for multimodal document reasoning with Groq.

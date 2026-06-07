@@ -21,5 +21,5 @@ COPY scripts /app/scripts
 
 RUN chmod +x /app/scripts/start.sh
 
-EXPOSE 8501
+EXPOSE 7860
 CMD ["/app/scripts/start.sh"]
