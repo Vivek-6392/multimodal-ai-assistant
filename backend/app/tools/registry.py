@@ -242,7 +242,7 @@ class ToolRegistry:
             try:
                 from youtube_transcript_api import YouTubeTranscriptApi
 
-                api = YouTubeTranscriptApi()
+                api = self._make_ytt_api()
 
                 transcript_data = api.fetch(video_id)
 
@@ -308,6 +308,29 @@ class ToolRegistry:
                 "failures": failures,
             },
         )
+
+    def _make_ytt_api(self):
+        """Return a YouTubeTranscriptApi instance, proxied if credentials exist."""
+        from youtube_transcript_api import YouTubeTranscriptApi
+
+        proxy_user = os.environ.get("WEBSHARE_USER")
+        proxy_pass = os.environ.get("WEBSHARE_PASS")
+
+        if proxy_user and proxy_pass:
+            try:
+                from youtube_transcript_api.proxies import WebshareProxyConfig
+                print("YouTube: using Webshare proxy")
+                return YouTubeTranscriptApi(
+                    proxy_config=WebshareProxyConfig(
+                        proxy_username=proxy_user,
+                        proxy_password=proxy_pass,
+                    )
+                )
+            except ImportError:
+                print("WebshareProxyConfig unavailable — run: pip install youtube-transcript-api --upgrade")
+
+        print("YouTube: no proxy configured, trying direct")
+        return YouTubeTranscriptApi()
 
     def qa(self, message: str, context: str, **_: Any) -> ToolResult:
         system = (
