@@ -22,6 +22,7 @@ class ToolRegistry:
             "youtube_transcript": self.youtube_transcript,
             "qa": self.qa,
             "compare_content": self.compare_content,
+            "audio_transcription": self.audio_transcription,
         }
 
     def run(self, tool_name: str, **kwargs: Any) -> ToolResult:
@@ -161,6 +162,13 @@ class ToolRegistry:
         user = f"User request:\n{message or 'Answer based on the provided content.'}\n\nExtracted content:\n{context[:18000]}"
         answer = self.groq_client.chat(system, user)
         return ToolResult(answer=answer, output_summary="Answered using cross-input reasoning.")
+
+    def audio_transcription(self, context: str, **_: Any) -> ToolResult:
+        return ToolResult(
+            answer=context,
+            output_summary="Audio transcription retrieved.",
+            metadata={"source": "groq_whisper"}
+        )
 
     def compare_content(self, message: str, context: str, **_) -> ToolResult:
 
