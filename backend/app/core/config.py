@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     groq_chat_model: str = "llama-3.3-70b-versatile"
     groq_audio_model: str = "whisper-large-v3-turbo"
-    groq_temperature: float = 0.2
+    groq_temperature: float = 0.7
 
     max_upload_mb: int = 50
     ocr_language: str = "eng"
