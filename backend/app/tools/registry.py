@@ -196,6 +196,7 @@ class ToolRegistry:
         import urllib.request, urllib.parse, json
 
         api_key = os.environ.get("SUPADATA_API_KEY", "")
+        print(f"Supadata key present: {bool(api_key)}, length: {len(api_key)}")
         if not api_key:
             print("Supadata: SUPADATA_API_KEY not set, skipping")
             return ""
